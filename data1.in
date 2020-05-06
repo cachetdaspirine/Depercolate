@@ -1,0 +1,56 @@
+# input File Simulation of simple string network
+#
+#Parametre de la serie de simulation
+LatticeEvolv: 1
+FiberEvolv: 1
+CellEvolv: 1
+D: 2
+SNum: 30
+dnEvolvStress: 0
+dnEvolvCell: 0
+dNTot: 0
+ddGamma: 0
+dHolesize: 0
+dP: 0 
+dseed: 6512
+#parametre pour chaque serie
+LatticeType: 1
+NTot: 1000
+TimeStep: 0.1
+dDump: 2
+nEvolvStress: 1
+nEvolvCell: 1
+animation: 0
+seed: 166516
+Lx: 100
+Ly: 100
+Lz: 1
+k/lambda: 1
+Epsilon: 1
+Gammax: 0.
+Gammay: 0.
+dGammax: 0.
+dGammay: 0.
+P: 0.8
+EpsilonLim: 1000
+PCrack: 1
+NCrackLim: 1000
+HoleSize: 0
+HolePos: 50 50 0
+CG: 1
+W0: 0.01
+Geometry: circle
+Ncut: 2
+rot: 1
+NetDump: 1
+Ncell: 1
+XCell: 50
+YCell: 50
+ZCell: 0
+flag: 0
+mobile: 0
+PathSaveFiber: /data/H.Le/simulation/+num+/Fiber/
+PathSaveLattice: /data/H.Le/simulation/+num+/Lattice/
+PathSaveCell: /data/H.Le/simulation/+num+/Cell/
+PathSaveStress: /data/H.Le/simulation/+num+/Stress/
+PathSaveImage: /data/H.Le/simulation/+num+/Image/

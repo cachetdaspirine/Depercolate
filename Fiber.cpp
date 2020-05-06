@@ -1,0 +1,1032 @@
+//
+//  Fiber.h
+//  Simple_String_Lattice
+//
+// Created by AAAAAAAAAAAAAAAIIIIIIIIIIIIIIIGGGGGGGGGGGHHHHHHHHHHTTTTTTT
+
+#include "Fiber.h"
+
+/*-----------------------------include classique-----------------------*/
+#include <iostream>
+#include <cmath>
+#include <fstream>
+#include <cstdlib>
+#include <algorithm>
+#include <blitz/array.h>
+#include <vector>
+#include <omp.h>
+#include <random>
+#include "erfinv.h"
+/*---------------------------------------------------------------------*/
+
+/*------------------------------include d objet------------------------*/
+#include "Parameter.h"
+#include "Lattice.h"
+/*---------------------------------------------------------------------*/
+
+
+using namespace blitz;
+
+// {{{ en fou toi
+
+bool Fiber::generate()
+{
+  return ((std::rand() % 1000000)/1000000.)<Pdil;
+}
+double Fiber::PickTime()
+{
+  //double Rd(((rand() % 100000000))/100000000.);
+  //double T0(param->g_Tau()*exp(sqrt(2/param->g_alpha())*erfinv(Rd)));
+  //
+  //
+  // Pick a time from a normal distribution.
+  double Rd1( (*Distrib)( *(param->g_generator()) ) );
+  // Then take the exponential:
+  double T0(param->g_Tau()*exp(Rd1));
+  //Then once the mean relaxation time picked, we pick the survival time
+  double Rd2=(rand() % 100000000)/100000000.;
+  double t0=-T0*log(1-Rd2);
+  CheckDistrib<<Rd1<<" "<<Rd2<<" "<<t0<<" "<<T0<<endl;
+  return t0;
+  //CheckDistrib<<T0<<" "<<t0<<endl;
+  //return t0;
+
+}
+int r(int a, int b)
+{
+  if(b<0){cout<<"Jsuis deçu..."<<endl; exit(0);}
+  while(a<0){a+=b;}
+  return a%b;
+  //return a;
+}
+
+double r(double a, double b)
+{
+  // if(abs(a)<abs(a-b) && abs(a)<abs(a+b)){return a;}
+  // if(abs(a-b)<abs(a) && abs(a-b)<abs(a+b)){return a-b;}
+  // else{return a+b;}
+  return a;
+}
+void Fiber::set_Gamma(Parameter* param)
+{
+  Gammax=param->get_Gammax();
+  Gammay=param->get_Gammay();
+  size(0)=Lx*(1+Gammax)*eps;
+  size(1)=Ly*(1+Gammay)*eps*0.866;
+  // if(D>=2){size(1)=(Ly*(1+Gamma))*0.866*eps;}
+  // if(D>=3){size(2)=(Lz*(1+Gamma))*0.866*eps;}
+}
+void Fiber::CheckCoord(Lattice* lattice)
+{
+  for(int i=0;i<Lx;i++)
+    {
+      for(int j=0;j<Ly;j++)
+	{
+	  int pair(0);
+	  if(j%2==0){pair=1;}
+	  for(int h=0;h<Lz;h++)
+	    {
+	      int C(0);
+	      for(int l=0;l<3;l++)
+		{
+		  if(dilute(Z/2*i+l,j,h)==1){C++;}
+		}
+	      // if(dilute(Z/2*r(i+pair,Lx),r(j-1,Ly),h)==1){C++;}
+	      // if(dilute(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),h)==1){C++;}
+	      // if(dilute(Z/2*r(i-1,Lx)+2,j,h)==1){C++;}
+	      if(dilute(Z/2*i+pair,j-1,h)==1){C++;}
+	      if(dilute(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),h)==1){C++;}
+	      if(dilute(Z/2*r(i-1,Lx)+2,j,h)==1){C++;}
+	      if(C!=lattice->get_coord(i,j,h))
+		{
+		  cout<<"problème de coordination FDP!!"<<endl;
+		  cout<<i<<" "<<j<<" "<<h<<endl;
+		  exit(0);
+		}
+	    }
+	}
+    }
+}
+
+// }}}
+
+// {{{ constructor
+void Fiber::CloseCheck(){CheckDistrib.close();}
+
+Fiber::Fiber(Parameter* parameter, Lattice* lattice)
+{
+  param=parameter;
+  CheckDistrib.open((param->get_PathSaveForce()+"/CheckDistrib.txt").c_str(),ios::out|ios::trunc);
+  CheckDistrib<<"Rd1(Normal) Rd2(Uniform) t0 T0"<<endl;
+  Distrib=new normal_distribution<double>(1,1/sqrt(param->g_alpha()));
+  if(parameter->get_LatticeType()==1){Z=6;}
+  Lx=parameter->get_Lx();
+  Ly=parameter->get_Ly();
+  Lz=parameter->get_Lz();
+  D=parameter->get_D();
+  path=parameter->get_PathSaveFiber();
+  pathStress=parameter->get_PathSaveStress();
+  kel=parameter->get_k();
+  eps=parameter->get_Epsilon();
+  epsLim=parameter->get_EpsilonLim();
+  Pdil=parameter->get_P();
+  Pcrack=parameter->get_PCrack();
+  NCrackLim=parameter->get_NCrackLim();
+  crack=0;
+  dDump=parameter->get_dDump();
+  Hx=parameter->get_HolePos()(0);
+  Hy=parameter->get_HolePos()(1);
+  Hz=parameter->get_HolePos()(2);
+  RH=parameter->get_HoleSize();
+  /*----------------Cree un vecteur de la bonne dimension--------------*/
+  Length.resize(Z/2*Lx,Ly,Lz);
+  Length=eps;
+  dilute.resize(Z/2*Lx,Ly,Lz);
+  force.resize(Lx,Ly,Lz,D);
+  printer.resize(Lx,Ly,Lz,6);
+  size.resize(D);
+  set_Gamma(parameter);
+  Geometry=parameter->get_Geometry();
+  if(D>=1){size(0)=Lx*(1+Gammax)*eps;}
+  if(D>=2){size(1)=Ly*(1+Gammay)*0.866*eps;}
+  if(D>=3){size(2)=Lz*0.866*eps;}
+  /*-------------------------------------------------------------------*/
+
+  /*----------ajuste la coordination initiale a chaque noeud-----------*/
+  /*-adjust the initial coordination of each nodes and set the lifetime of each bonds-*/
+  for(int i=0;i<Lx;i++)
+    {
+      for(int j=0;j<Ly;j++)
+	{
+	  int pair(0);
+	  if(j%2==0){pair=1;}
+	  for(int k=0;k<Lz;k++)
+	    {
+	      dilute(Z/2*i,j,k)=generate();dilute(Z/2*i+1,j,k)=generate();dilute(Z/2*i+2,j,k)=generate();
+	      if(dilute(Z/2*i,j,k)==1)
+		{
+		  lattice->p_coord(i,j,k);
+		  lattice->p_coord(r(i+pair-1,Lx),r(j+1,Ly),k);
+		}
+	      if(dilute(Z/2*i+1,j,k)==1)
+		{
+		  lattice->p_coord(i,j,k);
+		  lattice->p_coord(r(i+pair,Lx),r(j+1,Ly),k);
+		}
+	      if(dilute(Z/2*i+2,j,k)==1)
+		{
+		  lattice->p_coord(i,j,k);
+		  lattice->p_coord(r(i+1,Lx),j,k);
+		}
+	    }
+	}
+    }
+  //CheckCoord(lattice);
+  /*-------------------creer un reseau de la bonne geometrie-----------*/
+  if(parameter->get_Geometry()=="circle")
+    {
+      cout<<"circle"<<endl;
+      for(int i=0; i<Lx;i++)
+	{
+	  for(int j=0; j<Ly;j++)
+	    {
+	      for(int k=0;k<Lz;k++)
+		{
+		  if(planedist(i,j,k,Lx/2,Ly/2,Lz/2,lattice)>=0.866*eps*(Ly/2.-1) )
+		    {
+		      if(lattice->get_fixe(i,j,k)==0)
+			{cout<<"daaaamn"<<endl;}
+		      Clean(i,j,k,lattice);
+		    }
+		}
+	    }
+	}
+    }
+  if(parameter->get_Geometry()=="square")
+    {
+      for(int j=0;j<Ly;j++)
+	{
+	  Clean(0,j,0,lattice);
+	  Clean(Lx-1,j,0,lattice);
+	  //Clean(1,j,0,lattice);
+	  //Clean(Lx-2,j,0,lattice);
+	  
+	}
+      for(int i=0;i<Lx;i++)
+	{
+	  Clean(i,0,0,i,Ly-1,0,lattice);
+	  Clean(i,0,0,r(i+1,Lx),Ly-1,0,lattice);
+	  //Clean(i,0,0,lattice);
+	  //Clean(i,Ly-1,0,lattice);
+	}
+    }
+  int count(0);
+  //test.open("test.res");
+  for(int j=0;j<Lx;j++)
+    {
+      for(int i=0;i<Ly;i++)
+	{
+	  int p=1-j%2;
+	  for(int k=0;k<Lz;k++)
+	    {
+	      double time(0);
+	      if(dilute(Z/2*i,j,k)==1 & lattice->get_fixe(i,j,0)==1 & lattice->get_fixe(i-1+p,j+1,0)==1){time=PickTime();Time[time].push_back(Z/2*(i+Lx*j));}//count++;test<<i<<" "<<j<<" "<<0<<" "<<time<<endl;}
+	      if(dilute(Z/2*i+1,j,k)==1 & lattice->get_fixe(i,j,0)==1 & lattice->get_fixe(i+p,j+1,0)==1){time=PickTime();Time[time].push_back(Z/2*(i+Lx*j)+1);}//count++;test<<i<<" "<<j<<" "<<1<<" "<<time<<endl;}
+	      if(dilute(Z/2*i+2,j,k)==1 & lattice->get_fixe(i+1,j,0)==1){time=PickTime();Time[time].push_back(Z/2*(i+Lx*j)+2);}//count++;test<<i<<" "<<j<<" "<<2<<" "<<time<<endl;}
+	    }
+	}
+    }
+  // string trash;
+  // cin>>trash;
+  //cout<<count<<endl;
+  //cout<<Time.size()<<endl;;
+  // for(map<double,vector<int>>::iterator it=Time.begin();it!=Time.end();it++)
+  //   {
+  //     for(auto& it2 : it->second)
+  // 	{
+  // 	  test<<(it2%(3*Lx))/3<<" "<<(it2)/(3*Lx)<<" "<<it->first<<endl;
+  // 	}
+  //   }
+  // test.close();
+  // string trash;
+  // cin>>trash;
+  // ofstream test;
+  // string wesh("test.res");
+  // test.open(wesh);  
+  // for(map<double,int>::iterator it=Time.begin();it!=Time.end();it++)
+  //   {test<<((it->second)%(3*Lx))/3<<" "<<(it->second)/(3*Lx)<<" "<<it->first<<endl;}
+  // test.close();
+  //cout<<Time.size()<<endl;
+
+  /*-------------------------------------------------------------------*/
+  /*---------------------retire les fibres qui pendent-----------------*/
+  // if(min(lattice->get_coord())==1)
+  //   {
+  //     for(int i=0;i<Lx;i++)
+  // 	{
+  // 	  for(int j=0;j<Ly;j++)
+  // 	    {
+  // 	      for(int k=0;k<Lz;k++)
+  // 		{
+  // 		  if(lattice->get_coord(i,j,k)==1){Clean(i,j,k,lattice);lattice->m_coord(i,j,k);}
+  // 		}
+  // 	    }
+  // 	}
+  //   }
+  /*-------------------------------------------------------------------*/
+  //CheckCoord(lattice);
+}
+
+// }}}
+
+// {{{ get..
+
+void Fiber::set_Length(int i, int j, int k, double L)
+{
+  Length(i,j,k)=L;
+}
+double Fiber::get_Force(int i, int j, int k,int n)
+{
+  return force(i,j,k,n);
+}
+
+Array<double,4> Fiber::get_Force()
+{
+  return force;
+}
+
+int Fiber::get_Crack()
+{
+  return crack;
+}
+
+bool Fiber::get_Dilute(int i, int j, int k)
+{
+  return dilute(i,j,k);
+}
+void Fiber::set_Dilute(int i, int j, int k, bool dil)
+{
+  dilute(i,j,k)=dil;
+}
+double Fiber::get_Length(int i, int j, int l) const
+{
+  return Length(i,j,l);
+}
+vector<int> Fiber::get_BreakingFiber(double& time)
+{
+  //for(map<double,int>::iterator it=Time.begin();it!=Time.end();it++)
+    //{cout<<it->first<<" "<<it->second<<endl;}
+
+  //cout<<"end="<<prev(Time.end())->first<<" begin= "<<Time.begin()->first<<endl;
+  //cout<<prev(Time.end())->first<<endl;
+
+  // int select(rand() % Time.size());
+  // map<double,int>::iterator it=Time.begin();
+  // advance(it,select);
+  // time=it->first;
+  // int index(it->second);
+  // Time.erase(it);
+  
+  time=(Time.begin())->first;
+  vector<int> index((Time.begin())->second);
+  Time.erase((Time.begin()));
+  
+  //cout<<it->first<<" "<<it->second<<endl;
+
+  //string trash;
+  //cin>>trash;
+  
+  return index;
+}
+void Fiber::NewFiber(int index)
+{
+  double time=PickTime();
+  Time[time].push_back(index);
+  //test<<(index%(3*Lx))/3<<" "<<index/(3*Lx)<<" "<<time<<endl;
+}
+void Fiber::IterateTime(double dt)
+{
+  int n(0);
+  map<double,vector<int>> tampon;
+  for(map<double,vector<int>>::iterator it=Time.begin();it!=Time.end();it++)
+    {
+      //cout<<"hm..."<<endl;
+      auto Handler=Time.extract(it);
+      //cout<<"ouaiouai"<<endl;
+      Handler.key()-=dt;
+      //cout<<"aight"<<endl;
+      tampon[Handler.key()]=Handler.mapped();
+      //cout<<n<<endl;
+      //n++;
+    }
+  Time=tampon;
+  // test.open("test.res");
+  //   for(map<double,int>::iterator it=Time.begin();it!=Time.end();it++)
+  //   {test<<((it->second)%(3*Lx))/3<<" "<<(it->second)/(3*Lx)<<" "<<it->first<<endl;}
+  // test.close();
+  // string trash;
+  // cin>>trash;
+}
+// }}}
+
+
+// {{{ Evolv
+
+void Fiber::Evolv(Lattice* lattice, int n)
+{
+  int pair;
+  firstIndex fi;
+  if(D==2)
+    {
+      force=0;
+      for(int i=0;i<Lx;i++)
+	{
+	  for(int j=0;j<Ly;j++)
+	    {
+	      if(j%2==0){pair=1;}
+	      else{pair=0;}
+	      for(int k=0;k<Lz;k++)
+		{
+		  double e1(0),e2(0),e3(0);
+		  if(dilute(Z/2*i,j,k)==1){e1=1.;}
+		  if(dilute(Z/2*i+1,j,k)==1){e2=1.;}
+		  if(dilute(Z/2*i+2,j,k)==1){e3=1.;}
+		  double d1=dist(i,j,k,r(i-1+pair,Lx),r(j+1,Ly),k,lattice);
+		  double d2=dist(i,j,k,r(i+pair,Lx),r(j+1,Ly),k,lattice);
+		  double d3=dist(i,j,k,r(i+1,Lx),j,k,lattice);
+		  Array<double,1> E1(2);E1=vect(i,j,k,r(i-1+pair,Lx),r(j+1,Ly),k,lattice);
+		  Array<double,1> E2(2);E2=vect(i,j,k,r(i+pair,Lx),r(j+1,Ly),k,lattice);		  
+		  Array<double,1> E3(2);E3=vect(i,j,k,r(i+1,Lx),j,k,lattice);
+		  Array<double,1> E1p(2);E1p=e1*E1;
+		  Array<double,1> E2p(2);E2p=e2*E2;
+		  Array<double,1> E3p(2);E3p=e3*E3;
+		  if(n%dDump==0/*|| crack>NCrackLim/10*/ )
+		    {
+
+		      printer(i,j,k,0)=E1p(0);
+		      printer(i,j,k,1)=E1p(1);
+
+		      printer(i,j,k,2)=E2p(0);
+		      printer(i,j,k,3)=E2p(1);
+
+		      printer(i,j,k,4)=E3p(0);
+		      printer(i,j,k,5)=E3p(1);
+		       // printer(i,j,k,0)=0.965926*E1p(0)-0.258819*E1p(1);
+		       // printer(i,j,k,1)=E1p(1)*0.965926+0.258819*E1p(0);
+
+		       // printer(i,j,k,2)=0.965926*E2p(0)-0.258819*E2p(1);
+		       // printer(i,j,k,3)=E2p(1)*0.965926+0.258819*E2p(0);
+
+		       // printer(i,j,k,4)=0.965926*E3p(0)-0.258819*E3p(1);
+		       // printer(i,j,k,5)=E3p(1)*0.965926+0.258819*E3p(0);
+		    }
+		  if(d1!=0){E1=E1/d1;}
+		  else{E1=0;}
+		  if(d2!=0){E2=E2/d2;}
+		  else{E2=0;}
+		  if(d3!=0){E3=E3/d3;}
+		  else{E3=0;}
+		  // if(abs(sqrt(sum(E3(fi)*E3(fi)))-1)>1e-5){cout<<"daaaaaamn E3"<<endl<<E3<<" "<<i<<" "<<j<<" "<<k<<endl;exit(0);}
+		  // if(abs(sqrt(sum(E1(fi)*E1(fi)))-1)>1e-5){cout<<"daaaaaamn E1"<<endl<<d1<<" "<<E1<<" "<<i<<" "<<j<<" "<<k<<endl;exit(0);}
+		  // if(abs(sqrt(sum(E2(fi)*E2(fi)))-1)>1e-5){cout<<"daaaaaamn E2"<<endl<<E2<<" "<<i<<" "<<j<<" "<<k<<endl;exit(0);} 
+		  for(int l=0;l<D;l++)
+		    {
+		      if(i==0 || i==Lx-1 || j==0 || j==Ly-1)
+			{
+			  force((r(i-1+pair,Lx)),r(j+1,Ly),k,l)-=kel*(d1-Length(Z/2*i,j,k))*E1(l)*e1;
+			  force((r(i+pair,Lx)),r(j+1,Ly),k,l)-=kel*(d2-Length(Z/2*i+1,j,k))*E2(l)*e2;
+			  force((r(i+1,Lx)),j,k,l)-=kel*(d3-Length(Z/2*i+2,j,k))*E3(l)*e3;
+			  force(i,j,k,l)+=kel*((d1-Length(Z/2*i,j,k))*E1(l)*e1+(d2-Length(Z/2*i+1,j,k))*E2(l)*e2+(d3-Length(Z/2*i+2,j,k))*E3(l)*e3);
+			}
+		      else
+			{
+			  force((i-1+pair),j+1,k,l)-=kel*(d1-Length(Z/2*i,j,k))*E1(l)*e1;
+			  force((i+pair),j+1,k,l)-=kel*(d2-Length(Z/2*i+1,j,k))*E2(l)*e2;
+			  force((i+1),j,k,l)-=kel*(d3-Length(Z/2*i+2,j,k))*E3(l)*e3;
+			  force(i,j,k,l)+=kel*((d1-Length(Z/2*i,j,k))*E1(l)*e1+(d2-Length(Z/2*i+1,j,k))*E2(l)*e2+(d3-Length(Z/2*i+2,j,k))*E3(l)*e3);
+			}
+		    }
+		}
+	    }
+	}
+      //force(Range(0,0),Range(0,Ly-1),Range(0,Lz-1),Range(0,0))-=Gamma*kel*eps*Lx;
+      //force(Range(Lx-1,Lx-1),Range(0,Ly-1),Range(0,Lz-1),Range(0,0))+=Gamma*kel*eps*Lx;
+      if(n%dDump==0 /*|| crack>NCrackLim/10*/){Print(n);}
+      double totalforce;
+      totalforce=sum(force);
+      if(abs(totalforce)>1e-8 ){cout<<totalforce<<" non zero total force desoooooo"<<endl; exit(0);}
+      if(totalforce!=totalforce){cout<<totalforce<<" total force is NaN"<<endl; exit(0);}
+      
+    }
+}
+
+Array<double,1> Fiber::Compute(Lattice* lattice, int i, int j, int k)
+{
+  Array<double,1> force(D);
+  force=0;
+  int pair(0);
+  if(j%2==0){pair=1;}
+   // ofstream ouai("ouai.res");
+   // for(int oui=0;oui<Lx;oui++){for(int x=0;x<Ly;x++){for(int v=0;v<3;v++){if(dilute(Z/2*oui+v,x,0)==0){ouai<<oui<<" "<<v<<" "<<Z/2<< " "<<x<<endl;}}}}
+  double e1(0),e2(0),e3(0),e4(0),e5(0),e6(0);
+  if(dilute(Z/2*i,j,k)==1){e1=1.;}
+  if(dilute(Z/2*i+1,j,k)==1){e2=1.;}
+  if(dilute(Z/2*i+2,j,k)==1){e3=1.;}
+  if(dilute(Z/2*r(i+pair,Lx),r(j-1,Ly),k)==1){e4=1.;}
+  if(dilute(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),k)==1){e5=1.;}
+  if(dilute(Z/2*r(i-1,Lx)+2,j,k)==1){e6=1.;}
+  double d1=Hdist(i,j,k,r(i-1+pair,Lx),r(j+1,Ly),k,lattice);
+  double d2=Hdist(i,j,k,r(i+pair,Lx),r(j+1,Ly),k,lattice);
+  double d3=Hdist(i,j,k,r(i+1,Lx),j,k,lattice);
+  double d4=Hdist(i,j,k,r(i+pair,Lx),r(j-1,Ly),k,lattice);
+  double d5=Hdist(i,j,k,r(i+pair-1,Lx),r(j-1,Ly),k,lattice);
+  double d6=Hdist(i,j,k,r(i-1,Lx),j,k,lattice);
+  Array<double,1> E1(2);E1=vect(i,j,k,r(i-1+pair,Lx),r(j+1,Ly),k,lattice);
+  Array<double,1> E2(2);E2=vect(i,j,k,r(i+pair,Lx),r(j+1,Ly),k,lattice);	     
+  Array<double,1> E3(2);E3=vect(i,j,k,r(i+1,Lx),j,k,lattice);
+  Array<double,1> E4(2);E4=vect(i,j,k,r(i+pair,Lx),r(j-1,Ly),k,lattice);
+  Array<double,1> E5(2);E5=vect(i,j,k,r(i+pair-1,Lx),r(j-1,Ly),k,lattice);
+  Array<double,1> E6(2);E6=vect(i,j,k,r(i-1,Lx),j,k,lattice);
+  Array<double,1> E1p(2);E1p=e1*E1;
+  Array<double,1> E2p(2);E2p=e2*E2;
+  Array<double,1> E3p(2);E3p=e3*E3;
+  Array<double,1> E4p(2);E4p=e4*E4;
+  Array<double,1> E5p(2);E5p=e5*E5;
+  Array<double,1> E6p(2);E6p=e6*E6;
+  double eps1(Length(Z/2*i,j,k));
+  double eps2(Length(Z/2*i+1,j,k));
+  double eps3(Length(Z/2*i+2,j,k));
+  double eps4(Length(Z/2*r(i+pair,Lx),r(j-1,Ly),k));
+  double eps5(Length(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),k));
+  double eps6(Length(Z/2*r(i-1,Lx)+2,j,k));
+  
+  E1p=E1p/d1;
+  E2p=E2p/d2;
+  E3p=E3p/d3;
+  E4p=E4p/d4;
+  E5p=E5p/d5;
+  E6p=E6p/d6;
+  for(int i=0;i<D;i++)
+    {
+      force(i)+=kel*((d1-eps1)*E1p(i)+(d2-eps2)*E2p(i)+(d3-eps3)*E3p(i)+(d4-eps4)*E4p(i)+(d5-eps5)*E5p(i)+(d6-eps6)*E6p(i));
+    }
+  return force;
+}
+
+void Fiber::Printer(Lattice* lattice,int n)
+{
+  int pair;
+  firstIndex fi;
+  if(D==2)
+    {
+      force=0;
+      for(int i=0;i<Lx;i++)
+	{
+	  for(int j=0;j<Ly;j++)
+	    {
+	      if(j%2==0){pair=1;}
+	      else{pair=0;}
+	      for(int k=0;k<Lz;k++)
+		{
+		  double e1(0),e2(0),e3(0);
+		  if(dilute(Z/2*i,j,k)==1){e1=1.;}
+		  if(dilute(Z/2*i+1,j,k)==1){e2=1.;}
+		  if(dilute(Z/2*i+2,j,k)==1){e3=1.;}
+		  double d1=dist(i,j,k,r(i-1+pair,Lx),r(j+1,Ly),k,lattice);
+		  double d2=dist(i,j,k,r(i+pair,Lx),r(j+1,Ly),k,lattice);
+		  double d3=dist(i,j,k,r(i+1,Lx),j,k,lattice);
+		  Array<double,1> E1(2);E1=vect_rot(i,j,k,r(i-1+pair,Lx),r(j+1,Ly),k,lattice);
+		  Array<double,1> E2(2);E2=vect_rot(i,j,k,r(i+pair,Lx),r(j+1,Ly),k,lattice);
+		  Array<double,1> E3(2);E3=vect_rot(i,j,k,r(i+1,Lx),j,k,lattice);
+		  Array<double,1> E1p(2);E1p=e1*E1;
+		  Array<double,1> E2p(2);E2p=e2*E2;
+		  Array<double,1> E3p(2);E3p=e3*E3;
+		  printer(i,j,k,0)=E1p(0);
+		  printer(i,j,k,1)=E1p(1); 
+		  printer(i,j,k,2)=E2p(0);
+		  printer(i,j,k,3)=E2p(1);
+		  printer(i,j,k,4)=E3p(0);
+		  printer(i,j,k,5)=E3p(1);
+
+		  // printer(i,j,k,0)=0.965926*E1p(0)-0.258819*E1p(1);
+		  // printer(i,j,k,1)=E1p(1)*0.965926+0.258819*E1p(0);
+
+		  // printer(i,j,k,2)=0.965926*E2p(0)-0.258819*E2p(1);
+		  // printer(i,j,k,3)=E2p(1)*0.965926+0.258819*E2p(0);
+
+		  // printer(i,j,k,4)=0.965926*E3p(0)-0.258819*E3p(1);
+		  // printer(i,j,k,5)=E3p(1)*0.965926+0.258819*E3p(0);
+		  
+		}
+	    }
+	}     
+    }
+  PrintLength(n);
+  Print(n);
+}
+
+// }}}
+
+// {{{ Print...
+
+void Fiber::CloseStress()
+{
+
+    if(outStress){}
+  else{cout<<"Damn close"<<endl;exit(0);}
+  outStress.close();
+}
+void Fiber::PrintStress( int n)
+{
+  if(outStress){}
+  else{cout<<"Damn"<<" "<<n<<" Print"<<endl;exit(0);} 
+  outStress<<sum(force)<<" "<<n<<endl;
+}
+void Fiber::PrintLength(int n)
+{
+  outLength.open((path+"/length"+to_string(n)+".res").c_str(),ios::out|ios::trunc);
+  for(int i=0;i<Lx;i++)
+    {for(int j=0;j<Ly;j++)
+	{for(int k=0;k<3;k++)
+	    {
+	      outLength<<Length(Z/2*i+k,j,0)<<" ";
+	    }
+	  outLength<<"\n";
+	}
+    }
+  outLength.close();
+}
+void Fiber::OpenStress()
+{
+  outStress.open((pathStress+"/force.res").c_str(),ios::out|ios::trunc);
+  if(outStress){}
+  else{cout<<"Damn open"<<endl;exit(0);}
+}
+void Fiber::Print(int n)/*(Array<double,1> E1,Array<double,1> E2,Array<double,1> E3, int i, int j, int k )*/
+{
+    output.open((path+"/fiber"+to_string(n)+".res").c_str(),ios::out|ios::trunc);
+  //output<<E1(0)<<" "<<E1(1)<<" "<<E2(0)<<" "<<E2(1)<<" "<<E3(0)<<" "<<E3(1)<<" "<<i<<" "<<j<<" "<<k<<endl;
+  for(int i=0;i<Lx;i++)
+    {for(int j=0;j<Ly;j++)
+	{for(int k=0;k<Lz;k++)
+	    {
+	      output<<printer(i,j,k,0)<<" "<<printer(i,j,k,1)<<" "<<printer(i,j,k,2)<<" "<<printer(i,j,k,3)<<" "<<printer(i,j,k,4)<<" "<<printer(i,j,k,5)<<" "<<printer(i,j,k,6)<<" "<<i<<" "<<j<<" "<<k<<endl;
+	    }
+	}
+    }
+  output.close();
+}
+
+// }}}
+
+// {{{ dist/vect
+
+double Fiber::dist(int i, int j, int k, int l,int m, int n, Lattice* lattice)
+{
+  double distance(0);
+
+  if(Geometry=="circle")
+    {
+      for(int o=0;o<D;o++)
+	{
+	  distance+=pow(lattice->get_Grid_rot(i,j,k,o)-lattice->get_Grid_rot(l,m,n,o),2);
+	}
+    }
+  else
+    {
+      for(int o=0;o<D;o++)
+	{
+	  distance+=pow(r(lattice->get_Grid_rot(i,j,k,o)-lattice->get_Grid_rot(l,m,n,o),size(o)),2);
+	}
+    }
+  distance=sqrt(distance);
+  
+  if(distance>epsLim)
+    {
+      double rd=(rand() % 1000)/1000;
+      if(rd<Pcrack)
+	{
+	  Clean(i,j,k,l,m,n,lattice);
+	}
+    }
+  //if(distance==0 ){if( i!=l || j!=m || k!=n ){cout<<"distance between two node is 0 ?... "<<i<<" "<<j<<" "<<k<<" "<<l<<" "<<m<<" "<<n<<endl<<lattice->get_Grid(i,j,k,0)<<" "<<lattice->get_Grid(i,j,k,1)<<" "<<lattice->get_Grid(l,m,n,0)<<" "<<lattice->get_Grid(l,m,n,1)<<endl; ;exit(0);}}
+  if(distance!=distance){cout<<"distance is NaN..."<<endl;exit(0);}
+  return distance;
+}
+double Fiber::Hdist(int i, int j, int k, int l,int m, int n, Lattice* lattice)
+{
+  double distance(0);
+
+  if(Geometry=="circle")
+    {
+      for(int o=0;o<D;o++)
+	{
+	  distance+=pow(lattice->get_Grid_rot(i,j,k,o)-lattice->get_Grid_rot(l,m,n,o),2);
+	}
+    }
+  else
+    {
+      for(int o=0;o<D;o++)
+	{
+	  distance+=pow(r(lattice->get_Grid_rot(i,j,k,o)-lattice->get_Grid_rot(l,m,n,o),size(o)),2);
+	}
+    }
+    
+  distance=sqrt(distance);
+  return distance;
+}
+double Fiber::planedist(int i, int j, int k, int l,int m, int n, Lattice* lattice)
+{
+  double distance(0);
+  for(int o=0;o<D;o++)
+    {
+      distance+=pow(lattice->get_Grid_rot(i,j,k,o)-lattice->get_Grid_rot(l,m,n,o),2);
+    }
+    
+  distance=sqrt(distance);
+  return distance;
+}
+Array<double,1> Fiber::vect(int i, int j, int k, int l, int m, int n, Lattice* lattice)
+{
+  Array<double,1> vector(D);
+  vector=0;
+  for( int o=0;o<D;o++)
+    {
+      vector(o)=r(lattice->get_Grid_rot(l,m,n,o)-lattice->get_Grid_rot(i,j,k,o),size(o));
+    }
+  if(vector(0)!=vector(0)){cout<<"vector0 is NaN..."<<endl;exit(0);}
+  if(vector(1)!=vector(1)){cout<<"vector1 is NaN..."<<endl;exit(0);}
+  return vector;
+}
+Array<double,1> Fiber::vect_rot(int i, int j, int k, int l, int m, int n, Lattice* lattice)
+{
+  Array<double,1> vector(D);
+  vector=0;
+  for( int o=0;o<D;o++)
+    {
+      vector(o)=r(lattice->get_Grid(l,m,n,o)-lattice->get_Grid(i,j,k,o),size(o));
+    }
+  if(vector(0)!=vector(0)){cout<<"vector0 is NaN..."<<endl;exit(0);}
+  if(vector(1)!=vector(1)){cout<<"vector1 is NaN..."<<endl;exit(0);}
+  return vector;
+}
+
+
+Array<double,1> Fiber::Uvect(int i,int j, int k, int l, int m, int n, Lattice* lattice)
+{
+  Array<double,1> vector(D);
+  firstIndex fi;
+  vector=0;
+  for( int o=0;o<D;o++)
+    {
+      vector(o)=r(lattice->get_Grid_rot(l,m,n,o)-lattice->get_Grid_rot(i,j,k,o),size(o));
+    }
+  if(vector(0)!=vector(0)){cout<<"vector0 is NaN..."<<endl;exit(0);}
+  if(vector(1)!=vector(1)){cout<<"vector1 is NaN..."<<endl;exit(0);}
+  double hdistance(0);
+  hdistance=Hdist(i,j,k,l,m,n,lattice);
+  if(hdistance<1e-7)
+    {
+      vector=0;
+      return vector;
+    }
+  else
+    {
+      vector=vector/hdistance;
+    }
+  if(abs(sqrt(sum(vector(fi)*vector(fi)))-1)>1e-5){cout<<"daaaaaamn Uvect "<<endl<<vector<<" "<<i<<" "<<j<<" "<<k<<" "<<l<<" "<<m<<" "<<n<<endl;vector=0;}
+  return vector;
+}
+Array<double,1> Fiber::Uvect_rot(int i,int j, int k, int l, int m, int n, Lattice* lattice)
+{
+  Array<double,1> vector(D);
+  firstIndex fi;
+  vector=0;
+  for( int o=0;o<D;o++)
+    {
+      vector(o)=r(lattice->get_Grid(l,m,n,o)-lattice->get_Grid(i,j,k,o),size(o));
+    }
+  if(vector(0)!=vector(0)){cout<<"vector0 is NaN..."<<endl;exit(0);}
+  if(vector(1)!=vector(1)){cout<<"vector1 is NaN..."<<endl;exit(0);}
+  double hdistance(0);
+  hdistance=Hdist(i,j,k,l,m,n,lattice);
+  if(hdistance<1e-7)
+    {
+      vector=0;
+      return vector;
+    }
+  else
+    {
+      vector=vector/hdistance;
+    }
+  if(abs(sqrt(sum(vector(fi)*vector(fi)))-1)>1e-5){cout<<"daaaaaamn Uvect "<<endl<<vector<<" "<<i<<" "<<j<<" "<<k<<" "<<l<<" "<<m<<" "<<n<<endl;vector=0;}
+  return vector;
+}
+
+// }}}
+
+// {{{ troue/delete bond
+
+void Fiber::CreateHole( Lattice* lattice)
+{
+  for(int i=0;i<Lx;i++)
+    {
+      for(int j=0;j<Ly;j++)
+	{
+	  for(int k=0;k<Lz;k++)
+	    {
+	      if(Hdist(i,j,k,Hx,Hy,Hz,lattice)<RH){Clean(i,j,k,lattice);}
+	    }
+	}
+    }
+}
+
+
+
+
+Array<int,1> Fiber::Num(int i, int j, int k, int l, int m, int n)
+{
+  Array<int,1> num(3);
+  num=0;
+  int pair(0);
+  if(j%2==0){pair=1;}
+  if(l==r(i+pair-1,Lx) && m==r(j+1,Ly))
+    {
+      num(0)=Z/2*i;
+      num(1)=j;
+      num(2)=k;
+      return num;
+    }
+  else if(l==r(i+pair,Lx) && m==r(j+1,Ly))
+    {
+      num(0)=Z/2*i+1;
+      num(1)=j;
+      num(2)=k;
+      return num;
+    }
+  else if(l==r(i+1,Lx) && m==j)
+    {
+      num(0)=Z/2*i+2;
+      num(1)=j;
+      num(2)=k;
+      return num;
+    }
+  else if(l==r(i+pair,Lx) && m==r(j-1,Ly))
+    {
+      num(0)=Z/2*l;
+      num(1)=m;
+      num(2)=n;
+      return num;
+    }
+  else if(l==r(i+pair-1,Lx) && m==r(j-1,Ly))
+    {
+      num(0)=Z/2*l+1;
+      num(1)=m;
+      num(2)=n;
+      return num;
+    }
+  else if(l==r(i-1,Lx) && m==j)
+    {
+      num(0)=Z/2*l+2;
+      num(1)=m;
+      num(2)=n;
+      return num;
+    }
+  else
+    {
+      cout<<"bolosse !!"<<" "<<i<<" "<<j<<" "<<k<<" "<<l<<" "<<m<<" "<<n<<" "<<r(j+1,Ly)<<" "<<r(i+pair,Lx)<<endl;
+      exit(0);
+    }
+}
+
+void Fiber::Clean(int i, int j, int k,Lattice* lattice)
+{
+  int pair(0);
+  if(j%2==0){pair=1;}
+  if(dilute(Z/2*i,j,k)!=0)
+    {
+      dilute(Z/2*i,j,k)=0;
+      lattice->m_coord(r(i+pair-1,Lx),r(j+1,Ly),k);
+    }
+  if(dilute(Z/2*i+1,j,k)!=0)
+    {
+      dilute(Z/2*i+1,j,k)=0;
+      lattice->m_coord(r(i+pair,Lx),r(j+1,Ly),k);
+    }
+  if(dilute(Z/2*i+2,j,k)!=0)
+    {
+      dilute(Z/2*i+2,j,k)=0;
+      lattice->m_coord(r(i+1,Lx),j,k);
+    }
+  if(dilute(Z/2*r(i+pair,Lx),r(j-1,Ly),k)!=0)
+    {
+      dilute(Z/2*r(i+pair,Lx),r(j-1,Ly),k)=0;
+      lattice->m_coord(r(i+pair,Lx),r(j-1,Ly),k);
+    }
+  if(dilute(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),k)!=0)
+    {
+      dilute(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),k)=0;
+      lattice->m_coord(r(i+pair-1,Lx),r(j-1,Ly),k);
+    }
+  if(dilute(Z/2*r(i-1,Lx)+2,j,k)!=0)
+    {
+      dilute(Z/2*r(i-1,Lx)+2,j,k)=0;
+      lattice->m_coord(r(i-1,Lx),j,k);
+    }
+  lattice->set_coord(i,j,k,0);
+}
+void Fiber::cut(int i, int j, int k, int o,Lattice* lattice)
+{
+  int pair(0);
+  if(j%2==0){pair=1;}
+  if(dilute(Z/2*i+o,j,0)){dilute(Z/2*i+o,j,0)=0;}
+  else{cout<<"en fou toi...."<<endl;exit(0);}
+  if(o==0){lattice->m_coord(r(i+pair-1,Lx),r(j+1,Ly),0);}
+  else if(o==1){lattice->m_coord(r(i+pair,Lx),r(j+1,Ly),0);}
+  else if(o==2){lattice->m_coord(r(i+1,Lx),j,0);}
+  else{cout<<"o="<<o<<endl;exit(0);}
+}
+void Fiber::rClean(int i, int j, int k,Lattice* lattice)
+{
+  // {{{ rClean
+  //cout<<"finded?"<<endl;
+  int pair(0);
+  if(j%2==0){pair=1;}
+  double number;
+  number=(std::rand() % 10000)/10000.;
+  double C;
+  C=lattice->get_coord(i,j,k);
+  vector<vector<int>> bond(C);
+  vector<vector<int>> node(C);
+  //cout<<"C= "<<C<<endl;
+  int q(0);
+  //cout<<"declaration"<<endl;
+  //cout<<dilute(Z/2*i,j,k)<<endl;
+  if(dilute(Z/2*i,j,k)!=0)
+    {
+      bond[q].resize(3);
+      node[q].resize(3);
+      bond[q][0]=Z/2*i;;
+      bond[q][1]=j;
+      bond[q][2]=k;
+      node[q][0]=r(i+pair-1,Lx);
+      node[q][1]=r(j+1,Ly);
+      node[q][2]=k;
+      q++;
+	//dilute(Z/2*i,j,k)=0;
+	//lattice->m_coord(r(i+pair-1,Lx),r(j+1,Ly),k);
+    }
+  //cout<<dilute(Z/2*i+1,j,k)<<endl;
+  if(dilute(Z/2*i+1,j,k)!=0)
+    {
+      bond[q].resize(3);
+      node[q].resize(3);
+      bond[q][0]=Z/2*i+1;
+      bond[q][1]=j;
+      bond[q][2]=k;
+      node[q][0]=r(i+pair,Lx);
+      node[q][1]=r(j+1,Ly);
+      node[q][2]=k;
+      q++;
+      // dilute(Z/2*i+1,j,k)=0;
+      // lattice->m_coord(r(i+pair,Lx),r(j+1,Ly),k);
+    }
+  //cout<<dilute(Z/2*i+2,j,k)<<endl;
+  if(dilute(Z/2*i+2,j,k)!=0)
+    {
+      bond[q].resize(3);
+      node[q].resize(3);
+      bond[q][0]=Z/2*i+2;
+      bond[q][1]=j;
+      bond[q][2]=k;
+      node[q][0]=r(i+1,Lx);
+      node[q][1]=j;
+      node[q][2]=k;
+      q++; 
+      // dilute(Z/2*i+2,j,k)=0;
+      // lattice->m_coord(r(i+1,Lx),j,k);
+    }
+  //cout<<dilute(Z/2*r(i+pair,Lx),r(j-1,Ly),k)<<endl;
+  if(dilute(Z/2*r(i+pair,Lx),r(j-1,Ly),k)!=0)
+    {
+      bond[q].resize(3);
+      node[q].resize(3);
+      bond[q][0]=Z/2*r(i+pair,Lx);
+      bond[q][1]=r(j-1,Ly);
+      bond[q][2]=k;
+      node[q][0]=r(i+pair,Lx);
+      node[q][1]=r(j-1,Ly);
+      node[q][2]=k;
+      q++; 
+      // dilute(Z/2*r(i+pair,Lx),r(j-1,Ly),k)=0;
+      // lattice->m_coord(r(i+pair,Lx),r(j-1,Ly),k);
+    }
+  //cout<<dilute(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),k)<<endl;
+  if(dilute(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),k)!=0)
+    {
+      bond[q].resize(3);
+      node[q].resize(3);
+      bond[q][0]=Z/2*r(i+pair-1,Lx)+1;
+      bond[q][1]=r(j-1,Ly);
+      bond[q][2]=k;
+      node[q][0]=r(i+pair-1,Lx);
+      node[q][1]=r(j-1,Ly);
+      node[q][2]=k;
+      q++; 
+      // dilute(Z/2*r(i+pair-1,Lx)+1,r(j-1,Ly),k)=0;
+      // lattice->m_coord(r(i+pair-1,Lx),r(j-1,Ly),k);
+    }
+  //cout<<dilute(Z/2*r(i-1,Lx)+2,j,k)<<endl;
+  if(dilute(Z/2*r(i-1,Lx)+2,j,k)!=0)
+    {
+      bond[q].resize(3);
+      node[q].resize(3);
+      bond[q][0]=Z/2*r(i-1,Lx)+2;
+      bond[q][1]=j;
+      bond[q][2]=k;
+      node[q][0]=r(i-1,Lx);
+      node[q][1]=j;
+      node[q][2]=k;
+      q++; 
+      // dilute(Z/2*r(i-1,Lx)+2,j,k)=0;
+      // lattice->m_coord(r(i-1,Lx),j,k);
+    }
+  //cout<<"ouf..."<<endl;
+  for(int h=0;h<C;h++)
+    {
+      if(number>h/C & number<(h+1.)/C)
+  	{
+	  //cout<<h<<" "<<h/C<<" "<<number<<endl;
+	  //cout<<"dilute"<<endl;
+	  //cout<<bond.size()<<endl;
+	  //cout<<bond[h].size()<<endl;
+	  //cout<<bond[h][0]<<" "<<bond[h][1]<<" "<<bond[h][2]<<endl;
+	  //cout<<dilute(bond[h][0],bond[h][1],bond[h][2])<<endl;
+  	  dilute(bond[h][0],bond[h][1],bond[h][2])=0;
+	  //cout<<"-1"<<endl;
+  	  lattice->m_coord(node[h][0],node[h][1],node[h][2]);
+	  //cout<<"ouai ouai ouai"<<endl;
+	  lattice->m_coord(i,j,k);
+  	}
+    }
+  //cout<<"diluted"<<endl;
+  //cout<<"ended"<<endl;
+}
+// }}}
+void Fiber::Clean(int i, int j, int k, int l, int m, int n,Lattice* lattice)
+{
+  Array<int,1> num(3);
+  num=Num(i,j,k,l,m,n);
+  if(dilute(num(0),num(1),num(2))!=0)
+    {
+      dilute(num(0),num(1),num(2))=0;
+      crack++;
+      lattice->m_coord(i,j,k);
+      lattice->m_coord(l,m,n);
+      // if(lattice->get_coord(i,j,k)==1){Clean(i,j,k,lattice);}
+      // if(lattice->get_coord(l,m,n)==1){Clean(l,m,n,lattice);}
+    }
+}
+
+// }}}
+

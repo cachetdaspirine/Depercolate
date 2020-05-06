@@ -1,0 +1,55 @@
+import sys
+class Folder:
+    
+    def __init__(self,Folder,Serie,Ext,FiberFile="no",NodeFile="no",CellFile="no",VectFile="no",ParameterFile="no",numero=0,StressFile="no"):
+        self.Folder=Folder
+        self.Serie=Serie
+        self.NodeFile=NodeFile
+        self.FiberFile=FiberFile
+        self.CellFile=CellFile
+        self.VectFile=VectFile
+        self.Param=ParameterFile
+        self.Ext=Ext
+        self.Numero=numero
+        self.StressFile=StressFile
+                
+        self.fichiervariable=open(Folder+ParameterFile,'r')
+        contenue=self.fichiervariable.read().split("\n")
+        contenue=[i.split(" ") for i in contenue]
+        self.Lx=int(contenue[18][1])
+        self.Ly=int(contenue[19][1])
+        self.Lz=int(contenue[20][1])
+#        self.dt=float(contenue[18][1])
+        self.Ntot=int(contenue[13][1])
+        self.eps=float(contenue[22][1])
+        self.dDump=int(contenue[15][1])
+        self.nevolvStress=int(contenue[16][1])
+        self.dGamma=float(contenue[24][1])
+        self.ddGamma=float(contenue[7][1])
+        self.nEvolvCell=0
+        self.evolvcell=0
+        self.PCrack=float(contenue[29][1])
+        self.fichiervariable.close()
+        self.Nserie=int(contenue[4][1])
+        self.Ncell=0
+
+    #en partant du principe que on a un fichier par pas de temps on construit une fonction qui va ouvrire ce fichier a chaque fois, on lui fourni le nombre 'n' de pas de temps auquel on est
+    def OpenNetworkFile(self,n):
+        #if self.evolvcell==1:
+        #    decal=int(self.timeevolv//self.dt)
+        #else:
+        #    decal=0
+        #self.time=n*self.dt 
+        #num=str(n*int(self.pas)+decal)
+        #self.Data=open(self.folder+self.ResFile+num+self.Ext,'r')
+        return self.Folder+self.Serie+self.NodeFile+str(n*self.dDump)+self.Ext
+    def OpenFiberFile(self, n):
+        return self.Folder+self.Serie+self.FiberFile+str(n*self.dDump)+self.Ext
+    def OpenCellFile(self):
+        return self.Folder+self.Serie+self.CellFile
+    def OpenStressFile(self):
+        return self.Folder+self.Serie
+    def OpenVectFile(self, n,i):
+        return self.Folder+self.Serie+self.VectFile+str(n)+"_"+str(i)+self.Ext
+        
+    

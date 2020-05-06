@@ -1,0 +1,41 @@
+# input File Simulation of simple string network
+#
+#Parametre de la serie de simulation
+D: 2
+SNum: 10
+dnEvolvStress: 0
+dNTot: 0
+ddGamma: 0
+dHolesize: 0
+dP: 0 
+dseed: 6816
+#parametre pour chaque serie
+LatticeType: 1
+NTot: 100000
+TimeStep: 0.1
+dDump: 10
+nEvolvStress: 1
+seed: 8754476
+Lx: 100
+Ly: 100
+Lz: 1
+k/lambda: 1
+Epsilon: 1
+Gammax: 0.
+Gammay: 0.1
+dGammax: 0.
+dGammay: 0.
+P: 0.8
+EpsilonLim: 1000
+PCrack: 1
+NCrackLim: 1000
+HoleSize: 0
+HolePos: 50 50 0
+CG: 1
+W0: 0.01
+Geometry: square
+Ncut: 0
+rot: 0
+NetDump: 0
+rand: 0
+flag: 0
